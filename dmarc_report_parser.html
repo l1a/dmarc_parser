@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DMARC XML Report Parser</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for better readability and layout */
+        body {
+            font-family: "Inter", sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #0056b3;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .input-section, .output-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .output-section {
+             border: none; /* Remove border for output section itself */
+             padding: 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+            word-break: break-word; /* Prevent long text from overflowing */
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 15px;
+            margin-right: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        .btn:hover {
+            background-color: #0056b3;
+        }
+        .btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #csvDownloadLink {
+            display: none; /* Hide the download link initially */
+            margin-top: 15px;
+            text-decoration: underline;
+            color: #007bff;
+        }
+         .message-box {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+            display: none; /* Hidden by default */
+        }
+        .message-box.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .message-box.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>DMARC XML Report Parser</h1>
+
+        <div class="input-section">
+            <p>Upload your DMARC aggregate XML report file:</p>
+            <input type="file" id="xmlFile" accept=".xml">
+        </div>
+
+        <div class="output-section">
+            <p>Choose output format:</p>
+            <button id="showTableBtn" class="btn" disabled>Show as HTML Table</button>
+            <button id="generateCsvBtn" class="btn" disabled>Generate CSV</button>
+             <a id="csvDownloadLink" href="#" download="dmarc_report.csv">Download CSV</a>
+
+            <div id="messageBox" class="message-box"></div>
+
+            <div id="outputTableContainer" class="mt-4">
+                </div>
+        </div>
+    </div>
+
+    <script>
+        const xmlFile = document.getElementById('xmlFile');
+        const showTableBtn = document.getElementById('showTableBtn');
+        const generateCsvBtn = document.getElementById('generateCsvBtn');
+        const outputTableContainer = document.getElementById('outputTableContainer');
+        const csvDownloadLink = document.getElementById('csvDownloadLink');
+        const messageBox = document.getElementById('messageBox');
+
+        let parsedReportData = null; // Variable to hold the parsed data
+
+        // Event listener for file input change
+        xmlFile.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+
+                reader.onload = (e) => {
+                    const xmlString = e.target.result;
+                    try {
+                        parsedReportData = parseDmarcXml(xmlString);
+                        if (parsedReportData) {
+                            showMessage("XML parsed successfully. Choose an output format.", "info");
+                            showTableBtn.disabled = false;
+                            generateCsvBtn.disabled = false;
+                            // Clear previous output
+                            outputTableContainer.innerHTML = '';
+                            csvDownloadLink.style.display = 'none';
+                        } else {
+                            showMessage("Failed to parse XML. Please check the file format.", "error");
+                             showTableBtn.disabled = true;
+                            generateCsvBtn.disabled = true;
+                        }
+                    } catch (error) {
+                        showMessage(`Error parsing XML: ${error.message}`, "error");
+                        parsedReportData = null;
+                         showTableBtn.disabled = true;
+                        generateCsvBtn.disabled = true;
+                    }
+                };
+
+                reader.onerror = () => {
+                    showMessage("Error reading file.", "error");
+                     parsedReportData = null;
+                     showTableBtn.disabled = true;
+                    generateCsvBtn.disabled = true;
+                };
+
+                reader.readAsText(file); // Read the file as text
+            } else {
+                 parsedReportData = null;
+                 showTableBtn.disabled = true;
+                 generateCsvBtn.disabled = true;
+                 outputTableContainer.innerHTML = '';
+                 csvDownloadLink.style.display = 'none';
+                 hideMessage();
+            }
+        });
+
+        // Event listener for "Show as HTML Table" button
+        showTableBtn.addEventListener('click', () => {
+            if (parsedReportData) {
+                renderHtmlTable(parsedReportData);
+                csvDownloadLink.style.display = 'none'; // Hide CSV link if showing table
+            }
+        });
+
+        // Event listener for "Generate CSV" button
+        generateCsvBtn.addEventListener('click', () => {
+            if (parsedReportData) {
+                generateCsv(parsedReportData);
+            }
+        });
+
+        /**
+         * Parses the DMARC XML string.
+         * @param {string} xmlString The XML content as a string.
+         * @returns {object|null} A structured object containing the parsed data, or null if parsing fails.
+         */
+        function parseDmarcXml(xmlString) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+
+            // Check for parsing errors
+            const errorNode = xmlDoc.querySelector('parsererror');
+            if (errorNode) {
+                console.error("XML parsing error:", errorNode);
+                return null; // Indicate parsing failure
+            }
+
+            const report = {};
+            const feedbackElement = xmlDoc.documentElement; // The root element, should be <feedback>
+
+            if (!feedbackElement || feedbackElement.tagName !== 'feedback') {
+                 console.error("Root element is not 'feedback'");
+                 return null; // Not a valid DMARC report structure
+            }
+
+            // Parse report_metadata
+            const metadataElement = feedbackElement.querySelector('report_metadata');
+            if (metadataElement) {
+                report.metadata = {
+                    org_name: metadataElement.querySelector('org_name')?.textContent || '',
+                    report_id: metadataElement.querySelector('report_id')?.textContent || '',
+                    date_range: {
+                        begin: metadataElement.querySelector('date_range > begin')?.textContent || '',
+                        end: metadataElement.querySelector('date_range > end')?.textContent || ''
+                    },
+                    email: metadataElement.querySelector('email')?.textContent || '',
+                    extra_contact_info: metadataElement.querySelector('extra_contact_info')?.textContent || ''
+                };
+            }
+
+            // Parse policy_published
+            const policyPublishedElement = feedbackElement.querySelector('policy_published');
+            if (policyPublishedElement) {
+                report.policy_published = {
+                    domain: policyPublishedElement.querySelector('domain')?.textContent || '',
+                    adkim: policyPublishedElement.querySelector('adkim')?.textContent || '',
+                    aspf: policyPublishedElement.querySelector('aspf')?.textContent || '',
+                    p: policyPublishedElement.querySelector('p')?.textContent || '',
+                    sp: policyPublishedElement.querySelector('sp')?.textContent || '',
+                    pct: policyPublishedElement.querySelector('pct')?.textContent || '',
+                    fo: policyPublishedElement.querySelector('fo')?.textContent || ''
+                };
+            }
+
+            // Parse records
+            report.records = [];
+            const recordElements = feedbackElement.querySelectorAll('record');
+            recordElements.forEach(recordElement => {
+                const record = {
+                    row: {},
+                    auth_results: []
+                };
+
+                const rowElement = recordElement.querySelector('row');
+                if (rowElement) {
+                    record.row = {
+                        source_ip: rowElement.querySelector('source_ip')?.textContent || '',
+                        count: parseInt(rowElement.querySelector('count')?.textContent) || 0,
+                        policy_evaluated: {
+                            disposition: rowElement.querySelector('policy_evaluated > disposition')?.textContent || '',
+                            dkim: rowElement.querySelector('policy_evaluated > dkim')?.textContent || '',
+                            spf: rowElement.querySelector('policy_evaluated > spf')?.textContent || '',
+                            reasons: []
+                        }
+                    };
+                     // Parse policy evaluation reasons
+                    const reasonElements = rowElement.querySelectorAll('policy_evaluated > reason');
+                    reasonElements.forEach(reasonElement => {
+                        record.row.policy_evaluated.reasons.push({
+                            type: reasonElement.querySelector('type')?.textContent || '',
+                            comment: reasonElement.querySelector('comment')?.textContent || ''
+                        });
+                    });
+                }
+
+                const authResultsElement = recordElement.querySelector('auth_results');
+                if (authResultsElement) {
+                    // Parse DKIM results
+                    const dkimElements = authResultsElement.querySelectorAll('dkim');
+                    dkimElements.forEach(dkimElement => {
+                        record.auth_results.push({
+                            method: 'dkim',
+                            domain: dkimElement.querySelector('domain')?.textContent || '',
+                            result: dkimElement.querySelector('result')?.textContent || '',
+                            selector: dkimElement.querySelector('selector')?.textContent || ''
+                        });
+                    });
+
+                    // Parse SPF results
+                    const spfElements = authResultsElement.querySelectorAll('spf');
+                     spfElements.forEach(spfElement => {
+                        record.auth_results.push({
+                            method: 'spf',
+                            domain: spfElement.querySelector('domain')?.textContent || '',
+                            result: spfElement.querySelector('result')?.textContent || ''
+                        });
+                    });
+                }
+
+                report.records.push(record);
+            });
+
+            return report;
+        }
+
+        /**
+         * Renders the parsed report data as an HTML table.
+         * @param {object} reportData The structured report data.
+         */
+        function renderHtmlTable(reportData) {
+            let html = '<h2>Report Summary</h2>';
+
+            // Display Metadata and Policy Published
+            if (reportData.metadata) {
+                 html += '<h3>Metadata</h3>';
+                 html += '<table>';
+                 html += `<tr><th>Organization</th><td>${reportData.metadata.org_name}</td></tr>`;
+                 html += `<tr><th>Report ID</th><td>${reportData.metadata.report_id}</td></tr>`;
+                 html += `<tr><th>Date Range (Begin)</th><td>${reportData.metadata.date_range?.begin ? new Date(parseInt(reportData.metadata.date_range.begin) * 1000).toUTCString() : ''}</td></tr>`;
+                 html += `<tr><th>Date Range (End)</th><td>${reportData.metadata.date_range?.end ? new Date(parseInt(reportData.metadata.date_range.end) * 1000).toUTCString() : ''}</td></tr>`;
+                 html += `<tr><th>Report Email</th><td>${reportData.metadata.email}</td></tr>`;
+                 html += `<tr><th>Extra Contact Info</th><td>${reportData.metadata.extra_contact_info}</td></tr>`;
+                 html += '</table>';
+            }
+
+            if (reportData.policy_published) {
+                html += '<h3>Published Policy</h3>';
+                html += '<table>';
+                html += `<tr><th>Domain</th><td>${reportData.policy_published.domain}</td></tr>`;
+                html += `<tr><th>ADKIM Alignment</th><td>${reportData.policy_published.adkim}</td></tr>`;
+                html += `<tr><th>ASPF Alignment</th><td>${reportData.policy_published.aspf}</td></tr>`;
+                html += `<tr><th>Policy (p)</th><td>${reportData.policy_published.p}</td></tr>`;
+                html += `<tr><th>Subdomain Policy (sp)</th><td>${reportData.policy_published.sp}</td></tr>`;
+                html += `<tr><th>Percentage (pct)</th><td>${reportData.policy_published.pct}%</td></tr>`;
+                 html += `<tr><th>Failure Options (fo)</th><td>${reportData.policy_published.fo}</td></tr>`;
+                html += '</table>';
+            }
+
+
+            // Display Records in a table
+            if (reportData.records && reportData.records.length > 0) {
+                html += '<h3>Records</h3>';
+                html += '<table>';
+                html += '<thead>';
+                html += '<tr>';
+                html += '<th>Source IP</th>';
+                html += '<th>Count</th>';
+                html += '<th>Disposition</th>';
+                html += '<th>DKIM Result (Policy)</th>';
+                html += '<th>SPF Result (Policy)</th>';
+                html += '<th>Auth Results (DKIM)</th>';
+                html += '<th>Auth Results (SPF)</th>';
+                html += '<th>Policy Evaluated Reasons</th>';
+                html += '</tr>';
+                html += '</thead>';
+                html += '<tbody>';
+
+                reportData.records.forEach(record => {
+                    html += '<tr>';
+                    html += `<td>${record.row?.source_ip || ''}</td>`;
+                    html += `<td>${record.row?.count || 0}</td>`;
+                    html += `<td>${record.row?.policy_evaluated?.disposition || ''}</td>`;
+                    html += `<td>${record.row?.policy_evaluated?.dkim || ''}</td>`;
+                    html += `<td>${record.row?.policy_evaluated?.spf || ''}</td>`;
+
+                    // Display Auth Results (DKIM)
+                    let dkimAuthHtml = record.auth_results
+                        .filter(ar => ar.method === 'dkim')
+                        .map(ar => `Domain: ${ar.domain}, Result: ${ar.result}, Selector: ${ar.selector}`)
+                        .join('<br>');
+                    html += `<td>${dkimAuthHtml || ''}</td>`;
+
+                     // Display Auth Results (SPF)
+                    let spfAuthHtml = record.auth_results
+                        .filter(ar => ar.method === 'spf')
+                        .map(ar => `Domain: ${ar.domain}, Result: ${ar.result}`)
+                        .join('<br>');
+                    html += `<td>${spfAuthHtml || ''}</td>`;
+
+                     // Display Policy Evaluated Reasons
+                    let reasonHtml = record.row?.policy_evaluated?.reasons
+                        .map(reason => `Type: ${reason.type}, Comment: ${reason.comment}`)
+                        .join('<br>');
+                    html += `<td>${reasonHtml || ''}</td>`;
+
+
+                    html += '</tr>';
+                });
+
+                html += '</tbody>';
+                html += '</table>';
+            } else {
+                html += '<p>No records found in the report.</p>';
+            }
+
+
+            outputTableContainer.innerHTML = html;
+        }
+
+        /**
+         * Generates a CSV string from the parsed report data and provides a download link.
+         * @param {object} reportData The structured report data.
+         */
+        function generateCsv(reportData) {
+            let csvContent = "data:text/csv;charset=utf-8,";
+
+            // Add header row
+            csvContent += "Source IP,Count,Disposition,DKIM Result (Policy),SPF Result (Policy),Auth Results (DKIM),Auth Results (SPF),Policy Evaluated Reasons\n";
+
+            // Add data rows
+            if (reportData.records && reportData.records.length > 0) {
+                reportData.records.forEach(record => {
+                    const sourceIp = `"${record.row?.source_ip || ''}"`; // Enclose in quotes in case of commas
+                    const count = record.row?.count || 0;
+                    const disposition = `"${record.row?.policy_evaluated?.disposition || ''}"`;
+                    const dkimPolicyResult = `"${record.row?.policy_evaluated?.dkim || ''}"`;
+                    const spfPolicyResult = `"${record.row?.policy_evaluated?.spf || ''}"`;
+
+                    const dkimAuthCsv = `"${record.auth_results
+                        .filter(ar => ar.method === 'dkim')
+                        .map(ar => `Domain: ${ar.domain} Result: ${ar.result} Selector: ${ar.selector}`)
+                        .join('; ')
+                        .replace(/"/g, '""')}"`; // Handle quotes within data
+
+                     const spfAuthCsv = `"${record.auth_results
+                        .filter(ar => ar.method === 'spf')
+                        .map(ar => `Domain: ${ar.domain} Result: ${ar.result}`)
+                        .join('; ')
+                        .replace(/"/g, '""')}"`; // Handle quotes within data
+
+                     const reasonCsv = `"${record.row?.policy_evaluated?.reasons
+                        .map(reason => `Type: ${reason.type} Comment: ${reason.comment}`)
+                        .join('; ')
+                        .replace(/"/g, '""')}"`; // Handle quotes within data
+
+
+                    csvContent += `${sourceIp},${count},${disposition},${dkimPolicyResult},${spfPolicyResult},${dkimAuthCsv},${spfAuthCsv},${reasonCsv}\n`;
+                });
+            }
+
+            // Create a data URL and set the download link
+            const encodedUri = encodeURI(csvContent);
+            csvDownloadLink.href = encodedUri;
+            csvDownloadLink.style.display = 'block'; // Show the download link
+            outputTableContainer.innerHTML = ''; // Clear table output if showing CSV
+            showMessage("CSV file generated. Click 'Download CSV' below.", "info");
+        }
+
+        /**
+         * Displays a message in the message box.
+         * @param {string} message The message to display.
+         * @param {string} type The type of message ('info' or 'error').
+         */
+        function showMessage(message, type) {
+            messageBox.textContent = message;
+            messageBox.className = `message-box ${type}`; // Set class for styling
+            messageBox.style.display = 'block'; // Show the message box
+        }
+
+        /**
+         * Hides the message box.
+         */
+        function hideMessage() {
+            messageBox.style.display = 'none';
+            messageBox.textContent = '';
+            messageBox.className = 'message-box'; // Reset class
+        }
+
+         // Initial state: disable buttons
+         showTableBtn.disabled = true;
+         generateCsvBtn.disabled = true;
+
+    </script>
+</body>
+</html>
